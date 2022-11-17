@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <string>
+#include <vector>
         
 //sockaddr_in hint; //declaramos una estructura de tipo sockadd_in que contiene estos miembros 
 //short            sin_family;   // e.g. AF_INET
@@ -30,11 +31,11 @@ class server{
             memset(&hint, 0 , sizeof(hint));
             hint.ai_family = AF_UNSPEC;
             hint.ai_socktype = SOCK_STREAM;
-            errorinfo = getaddrinfo(NULL,"6660",&hint,&serv); //https://www.ibm.com/docs/es/aix/7.3?topic=g-getaddrinfo-subroutine
+            errorinfo = getaddrinfo("0.0.0.0","6660",&hint,&serv); //https://www.ibm.com/docs/es/aix/7.3?topic=g-getaddrinfo-subroutine
             socketfd = socket(serv->ai_family, serv->ai_socktype, 0);
             // Unir el socket a una ip/puerto
-            
-            bind(socketfd, (sockaddr*)&serv, sizeof(serv));// esta funcion enlaza al filedescriptor la estructura. ahora socketfd apunta a hint.
+            std::cout << bind(socketfd,  serv->ai_addr, serv->ai_addrlen) << std::endl;// esta funcion enlaza al filedescriptor la estructura. ahora socketfd apunta a hint.
+           
             // poner a la escucha el filedescriptor
             listen(socketfd, SOMAXCONN);
         }
@@ -45,21 +46,52 @@ class client{
     public:
         sockaddr_in cliente;
         socklen_t clienteSize;
-        int clientSocket;
         char host[NI_MAXHOST];      // Client's remote name
         char service[NI_MAXSERV];   // Service (i.e. port) the client is connect on
 
-        client(int socketfd){
+        client(){
             clienteSize = sizeof(cliente);
-            clientSocket = accept(socketfd, (sockaddr*)&cliente, &clienteSize);
             memset(host, 0, NI_MAXHOST); // same as memset(host, 0, NI_MAXHOST);
             memset(service, 0, NI_MAXSERV);
+        }
+ };
+
+ class canal{
+     public:
+        int clientSocket;
+        char buf[4096];
+        int bytesReceived;
+        int sendResult;
+        canal(int socketfd):clientSocket(socketfd){
+            while (true){
+                memset(buf, 0, 4096);
+                int bytesReceived = recv(clientSocket, buf, 4096, 0);
+                if (bytesReceived == -1)
+                {
+                    std::cerr << "Error in recv(). Quitting" << std::endl;
+                    break;
+                }
+        
+                if (bytesReceived == 0)
+                {
+                    std::cout << "Client disconnected " << std::endl;
+                    break;
+                }
+                std::cout << buf;
+                // Echo message back to client
+                char s[] = "recibido\n";
+                send(clientSocket, s, sizeof(s), 0);
+            }
         }
  };
  
 int main()
 {
+    int clientSocket = 0, contador_de_clientes = 0;
     server server1;
+    int numero_de_clientes = 1024;
+    std::vector<canal> canales;
+
     if (server1.socketfd == -1)
     {
         std::cerr << "Error al abrir el Socket" << std::endl;
@@ -67,54 +99,41 @@ int main()
     }
     
     //poll(struct pollfd * fds , nfds_t nfds , int timeout )
-
+    std::cout << "Server abierto" << std::endl;
     // esperando una conexion
-    client cliente1(server1.socketfd);
- 
-    if (getnameinfo((sockaddr*)&cliente1, sizeof(client), cliente1.host, NI_MAXHOST, cliente1.service, NI_MAXSERV, 0) == 0)
-    {
-        std::cout << cliente1.host << " connected on port " << cliente1.service << std::endl;
-    }
-    else
-    {
-        inet_ntop(AF_INET, &cliente1.cliente.sin_family, cliente1.host, NI_MAXHOST);
-        std::cout << cliente1.host << " connected on port " << ntohs(cliente1.cliente.sin_port) << std::endl;
-    }
+    client cliente1;
  
     // Close listening socket
-    close(server1.socketfd);
+    //close(server1.socketfd);
  
     // While loop: accept and echo message back to client
-    char buf[4096];
  
     while (true)
     {
-        memset(buf, 0, 4096);
- 
+        int tmp = clientSocket;
+        clientSocket = accept(server1.socketfd, (sockaddr*)&cliente1.cliente, &cliente1.clienteSize);
+        std::cout << "clienteSocket: " << clientSocket << std::endl;
         // Wait for client to send data
-        int bytesReceived = recv(cliente1.clientSocket, buf, 4096, 0);
-        if (bytesReceived == -1)
-        {
-            std::cerr << "Error in recv(). Quitting" << std::endl;
-            break;
+        if (clientSocket != tmp && clientSocket != -1){
+            //aqui crear objeto canal para cada cliente
+            pid_t pid = fork();
+            if (pid > 0){
+            }
+            else if (pid == 0){
+                //aqui el codigo del hijo
+                canales.push_back(canal(clientSocket));
+            }
+            else{
+                std::cerr << "Error al crear el proceso hijo" << std::endl;
+            }
         }
- 
-        if (bytesReceived == 0)
-        {
-            std::cout << "Client disconnected " << std::endl;
-            break;
+        else{
+            std::cout << "Error en la conexion" << std::endl;
         }
- 
-        std::cout << std::string(buf, 0, bytesReceived) << std::endl;
- 
-        // Echo message back to client
-        send(cliente1.clientSocket, buf, bytesReceived + 1, 0);
-       
-
     }
  
     // Close the socket
-    close(cliente1.clientSocket);
+    close(clientSocket);
  
     return 0;
 }
